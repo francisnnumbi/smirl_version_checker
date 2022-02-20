@@ -118,7 +118,7 @@ class VersionChecker {
     try {
       final response = await http.get(uri);
       if (response.statusCode != 200) {
-        debugPrint('Can\'t find an app in the App Store with the id: $id');
+       // debugPrint('Can\'t find an app in the App Store with the id: $id');
         return null;
       }
 
@@ -144,7 +144,7 @@ class VersionChecker {
     try {
       final response = await http.get(uri);
       if (response.statusCode != 200) {
-        debugPrint('Can\'t find an app in the Play Store with the id: $id');
+      //  debugPrint('Can\'t find an app in the Play Store with the id: $id');
         return null;
       }
       final document = parse(response.body);
@@ -257,7 +257,7 @@ class VersionChecker {
 
   /// Launches the Apple App Store or Google Play Store page for the app.
   void _launchAppStore(String appStoreLink) async {
-    debugPrint(appStoreLink);
+   // debugPrint(appStoreLink);
     if (await canLaunch(appStoreLink)) {
       await launch(appStoreLink);
     } else {
