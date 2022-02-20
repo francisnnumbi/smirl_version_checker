@@ -1,7 +1,7 @@
 name: smirl_version_checker
 description: the package that check if a new version is on playstore or appstore, based on new_version package with exception checker
-version: 0.0.1
-homepage: https://smirl.org
+version: 0.0.2
+homepage: https://github.com/francisnnumbi/smirl_version_checker
 
 environment:
   sdk: ">=2.12.0 <3.0.0"

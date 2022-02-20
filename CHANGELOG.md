@@ -1,3 +1,3 @@
-## 0.0.1
+## 0.0.2
 
-This is an initial release
+Adding the possibility of checking device info as well as app info and on top of it the ip address
