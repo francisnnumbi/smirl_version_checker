@@ -1,9 +1,10 @@
-library smirl_version_checker;
+library new_version;
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
+import 'package:collection/collection.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:html/parser.dart' show parse;
@@ -26,29 +27,28 @@ class VersionStatus {
   /// The release notes for the store version of the app.
   final String? releaseNotes;
 
-  /// True if the there is a more recent version of the app in the store.
-  // bool get canUpdate => localVersion.compareTo(storeVersion).isNegative;
-  // version strings can be of the form xx.yy.zz (build)
+  /// Returns `true` if the store version of the application is greater than the local version.
   bool get canUpdate {
-    // assume version strings can be of the form xx.yy.zz
-    // this implementation correctly compares local 1.10.1 to store 1.9.4
-    try {
-      final localFields = localVersion.split('.');
-      final storeFields = storeVersion.split('.');
-      String localPad = '';
-      String storePad = '';
-      for (int i = 0; i < storeFields.length; i++) {
-        localPad = localPad + localFields[i].padLeft(3, '0');
-        storePad = storePad + storeFields[i].padLeft(3, '0');
-      }
-      // print('new_version canUpdate local $localPad store $storePad');
-      if (localPad.compareTo(storePad) < 0)
+    final local = localVersion.split('.').map(int.parse).toList();
+    final store = storeVersion.split('.').map(int.parse).toList();
+
+    // Each consecutive field in the version notation is less significant than the previous one,
+    // therefore only one comparison needs to yield `true` for it to be determined that the store
+    // version is greater than the local version.
+    for (var i = 0; i < store.length; i++) {
+      // The store version field is newer than the local version.
+      if (store[i] > local[i]) {
         return true;
-      else
+      }
+
+      // The local version field is newer than the store version.
+      if (local[i] > store[i]) {
         return false;
-    } catch (e) {
-      return localVersion.compareTo(storeVersion).isNegative;
+      }
     }
+
+    // The local and store versions are the same.
+    return false;
   }
 
   VersionStatus._({
@@ -76,10 +76,16 @@ class VersionChecker {
   /// See http://en.wikipedia.org/wiki/ ISO_3166-1_alpha-2 for a list of ISO Country Codes.
   final String? iOSAppStoreCountry;
 
+  /// An optional value that will force the plugin to always return [forceAppVersion]
+  /// as the value of [storeVersion]. This can be useful to test the plugin's behavior
+  /// before publishng a new version.
+  final String? forceAppVersion;
+
   VersionChecker({
     this.androidId,
     this.iOSId,
     this.iOSAppStoreCountry,
+    this.forceAppVersion,
   });
 
   /// This checks the version status, then displays a platform-specific alert
@@ -106,6 +112,11 @@ class VersionChecker {
     }
   }
 
+  /// This function attempts to clean local version strings so they match the MAJOR.MINOR.PATCH
+  /// versioning pattern, so they can be properly compared with the store version.
+  String _getCleanVersion(String version) =>
+      RegExp(r'\d+\.\d+\.\d+').stringMatch(version) ?? '0.0.0';
+
   /// iOS info is fetched by using the iTunes lookup API, which returns a
   /// JSON document.
   Future<VersionStatus?> _getiOSStoreVersion(PackageInfo packageInfo) async {
@@ -115,64 +126,83 @@ class VersionChecker {
       parameters.addAll({"country": iOSAppStoreCountry!});
     }
     var uri = Uri.https("itunes.apple.com", "/lookup", parameters);
-    try {
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-       // debugPrint('Can\'t find an app in the App Store with the id: $id');
-        return null;
-      }
-
-      final jsonObj = json.decode(response.body);
-
-      return VersionStatus._(
-        localVersion: packageInfo.version,
-        storeVersion: jsonObj['results'][0]['version'],
-        appStoreLink: jsonObj['results'][0]['trackViewUrl'],
-        releaseNotes: jsonObj['results'][0]['releaseNotes'],
-      );
-    } catch (exc) {
+    final response = await http.get(uri);
+    if (response.statusCode != 200) {
+      debugPrint('Failed to query iOS App Store');
       return null;
     }
+    final jsonObj = json.decode(response.body);
+    final List results = jsonObj['results'];
+    if (results.isEmpty) {
+      debugPrint('Can\'t find an app in the App Store with the id: $id');
+      return null;
+    }
+    return VersionStatus._(
+      localVersion: _getCleanVersion(packageInfo.version),
+      storeVersion:
+          _getCleanVersion(forceAppVersion ?? jsonObj['results'][0]['version']),
+      appStoreLink: jsonObj['results'][0]['trackViewUrl'],
+      releaseNotes: jsonObj['results'][0]['releaseNotes'],
+    );
   }
 
   /// Android info is fetched by parsing the html of the app store page.
   Future<VersionStatus?> _getAndroidStoreVersion(
       PackageInfo packageInfo) async {
     final id = androidId ?? packageInfo.packageName;
-    final uri =
-        Uri.https("play.google.com", "/store/apps/details", {"id": "$id"});
-    try {
-      final response = await http.get(uri);
-      if (response.statusCode != 200) {
-      //  debugPrint('Can\'t find an app in the Play Store with the id: $id');
-        return null;
-      }
-      final document = parse(response.body);
+    final uri = Uri.https(
+        "play.google.com", "/store/apps/details", {"id": "$id", "hl": "en"});
+    final response = await http.get(uri);
+    if (response.statusCode != 200) {
+      debugPrint("Can't find an app in the Play Store with the id: $id");
+      return null;
+    }
+    final document = parse(response.body);
 
-      final additionalInfoElements = document.getElementsByClassName('hAyfc');
+    String storeVersion = '0.0.0';
+    String? releaseNotes;
+
+    final additionalInfoElements = document.getElementsByClassName('hAyfc');
+    if (additionalInfoElements.isNotEmpty) {
       final versionElement = additionalInfoElements.firstWhere(
         (elm) => elm.querySelector('.BgcNfc')!.text == 'Current Version',
       );
-      final storeVersion = versionElement.querySelector('.htlgb')!.text;
+      storeVersion = versionElement.querySelector('.htlgb')!.text;
 
       final sectionElements = document.getElementsByClassName('W4P4ne');
-      final releaseNotesElement = sectionElements.firstWhere(
+      final releaseNotesElement = sectionElements.firstWhereOrNull(
         (elm) => elm.querySelector('.wSaTQd')!.text == 'What\'s New',
       );
-      final releaseNotes = releaseNotesElement
-          .querySelector('.PHBdkd')
+      releaseNotes = releaseNotesElement
+          ?.querySelector('.PHBdkd')
           ?.querySelector('.DWPxHb')
           ?.text;
-
-      return VersionStatus._(
-        localVersion: packageInfo.version,
-        storeVersion: storeVersion,
-        appStoreLink: uri.toString(),
-        releaseNotes: releaseNotes,
+    } else {
+      final scriptElements = document.getElementsByTagName('script');
+      final infoScriptElement = scriptElements.firstWhere(
+        (elm) => elm.text.contains('key: \'ds:4\''),
       );
-    } catch (exc) {
-      return null;
+
+      final param = infoScriptElement.text
+          .substring(20, infoScriptElement.text.length - 2)
+          .replaceAll('key:', '"key":')
+          .replaceAll('hash:', '"hash":')
+          .replaceAll('data:', '"data":')
+          .replaceAll('sideChannel:', '"sideChannel":')
+          .replaceAll('\'', '"');
+      final parsed = json.decode(param);
+      final data = parsed['data'];
+
+      storeVersion = data[1][2][140][0][0][0];
+      releaseNotes = data[1][2][144][1][1];
     }
+
+    return VersionStatus._(
+      localVersion: _getCleanVersion(packageInfo.version),
+      storeVersion: _getCleanVersion(forceAppVersion ?? storeVersion),
+      appStoreLink: uri.toString(),
+      releaseNotes: releaseNotes,
+    );
   }
 
   /// Shows the user a platform-specific alert about the app update. The user
@@ -194,12 +224,12 @@ class VersionChecker {
     final dialogTitleWidget = Text(dialogTitle);
     final dialogTextWidget = Text(
       dialogText ??
-          'Vous pouvez mettre à jour cette application de ${versionStatus.localVersion} à ${versionStatus.storeVersion}',
+          'Vous pouvez à présent mettre à jour de ${versionStatus.localVersion} à ${versionStatus.storeVersion}',
     );
 
     final updateButtonTextWidget = Text(updateButtonText);
     final updateAction = () {
-      _launchAppStore(versionStatus.appStoreLink);
+      launchAppStore(versionStatus.appStoreLink);
       if (allowDismissal) {
         Navigator.of(context, rootNavigator: true).pop();
       }
@@ -234,7 +264,7 @@ class VersionChecker {
       );
     }
 
-    showDialog(
+    await showDialog(
       context: context,
       barrierDismissible: allowDismissal,
       builder: (BuildContext context) {
@@ -256,12 +286,12 @@ class VersionChecker {
   }
 
   /// Launches the Apple App Store or Google Play Store page for the app.
-  void _launchAppStore(String appStoreLink) async {
-   // debugPrint(appStoreLink);
-    if (await canLaunch(appStoreLink)) {
-      await launch(appStoreLink);
+  Future<void> launchAppStore(String appStoreLink) async {
+    debugPrint(appStoreLink);
+    if (await canLaunchUrl(Uri(path: appStoreLink))) {
+      await launchUrl(Uri(path: appStoreLink));
     } else {
-      throw 'Could not launch appStoreLink';
+      throw "On n'a pas plus lancer appStoreLink";
     }
   }
 }

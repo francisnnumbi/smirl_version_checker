@@ -1,6 +1,6 @@
 name: smirl_version_checker
 description: the package that check if a new version is on playstore or appstore, based on new_version package with exception checker
-version: 0.0.3
+version: 0.0.4
 homepage: https://github.com/francisnnumbi/smirl_version_checker
 
 environment:
@@ -12,10 +12,11 @@ dependencies:
     sdk: flutter
 
   http: ^0.13.4
-  device_info_plus: ^3.2.2
+  device_info_plus: ^3.2.4
   package_info_plus: ^1.4.2
   html: ^0.15.0
-  url_launcher: ^6.0.20
+  url_launcher: ^6.1.3
+  collection: ^1.16.0
 
 dev_dependencies:
   flutter_test:
